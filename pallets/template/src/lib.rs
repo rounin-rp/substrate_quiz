@@ -1,102 +1,214 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-/// Edit this file to define custom logic or remove it if it is not needed.
-/// Learn more about FRAME and the core library of Substrate FRAME pallets:
-/// <https://docs.substrate.io/v3/runtime/frame>
 pub use pallet::*;
-
-#[cfg(test)]
-mod mock;
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(feature = "runtime-benchmarks")]
-mod benchmarking;
 
 #[frame_support::pallet]
 pub mod pallet {
-	use frame_support::pallet_prelude::*;
+// use frame_support::tests::Config;
+	use sp_std::vec::Vec;
 	use frame_system::pallet_prelude::*;
+	use frame_support::pallet_prelude::*;
+	use frame_support::{
+		sp_runtime::traits::Hash,
+	};
 
-	/// Configure the pallet by specifying the parameters and types on which it depends.
-	#[pallet::config]
-	pub trait Config: frame_system::Config {
-		/// Because this pallet emits events, it depends on the runtime's definition of an event.
-		type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
+	#[cfg(feature = "std")]
+	use frame_support::serde::{Deserialize, Serialize};
+
+	type AccountOf<T> = <T as frame_system::Config>::AccountId;
+
+
+	//Struct for Quiz
+	#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
+	#[scale_info(skip_type_params(T))]
+	pub struct Quiz<T:Config>{
+		pub owner: AccountOf<T>,
+		pub questions: Vec<Question>,
+		pub rating: u8,
+	}
+
+	//Struct for Question
+	#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
+	#[scale_info(skip_type_params(T))]
+	pub struct Question{
+		pub statement: Vec<u8>,
+		pub option1: Vec<u8>,
+		pub option2: Vec<u8>,
+		pub option3: Vec<u8>,
+		pub option4: Vec<u8>,
+	}
+
+	//Struct for Solution of a quiz --- a quiz is consist of 5 questions so the the solution will have 5 answers
+	#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
+	#[scale_info(skip_type_params(T))]
+	pub struct Solution{
+		pub answer1: u8,
+		pub answer2: u8,
+		pub answer3: u8,
+		pub answer4: u8,
+		pub answer5: u8,
 	}
 
 	#[pallet::pallet]
-	#[pallet::generate_store(pub(super) trait Store)]
-	pub struct Pallet<T>(_);
+    #[pallet::generate_store(pub(super) trait Store)]
+    pub struct Pallet<T>(_);
 
-	// The pallet's runtime storage items.
-	// https://docs.substrate.io/v3/runtime/storage
-	#[pallet::storage]
-	#[pallet::getter(fn something)]
-	// Learn more about declaring storage items:
-	// https://docs.substrate.io/v3/runtime/storage#declaring-storage-items
-	pub type Something<T> = StorageValue<_, u32>;
+	#[pallet::config]
+    pub trait Config: frame_system::Config {
+        /// Because this pallet emits events, it depends on the runtime's definition of an event.
+        type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
+    }
 
-	// Pallets use events to inform users when important changes are made.
-	// https://docs.substrate.io/v3/runtime/events-and-errors
-	#[pallet::event]
-	#[pallet::generate_deposit(pub(super) fn deposit_event)]
-	pub enum Event<T: Config> {
-		/// Event documentation should end with an array that provides descriptive names for event
-		/// parameters. [something, who]
-		SomethingStored(u32, T::AccountId),
-	}
+	 // Errors.
+	 #[pallet::error]
+	 pub enum Error<T> {
+		 /// If the option provided is invalid
+		 InvalidOptionProvided,
+		 /// Handles checking whether Quiz Exists
+		 QuizDoesNotExist,
+		 /// Handles if user rating not found (very rare)
+		 UserRatingNotFound,
+		 /// Handles if user rating is not enough for attempting the quiz
+		 UserRatingTooLow,
+		 /// Handles if the quiz owner tries to attempt the quiz
+		 OwnerCannotAttemptQuiz,
+	 }
+ 
+	 #[pallet::event]
+	 #[pallet::generate_deposit(pub(super) fn deposit_event)]
+	 pub enum Event<T: Config> {
+		 ///Quiz created
+		 QuizCreated(T::Hash, T::AccountId, u8),
+		 /// Quiz score after attempt
+		 QuizScore(T::Hash, T::AccountId, u8),
+	 }
 
-	// Errors inform users that something went wrong.
-	#[pallet::error]
-	pub enum Error<T> {
-		/// Error names should be descriptive.
-		NoneValue,
-		/// Errors should have helpful documentation associated with them.
-		StorageOverflow,
-	}
+	 #[pallet::storage]
+	 #[pallet::getter(fn get_quiz)]
+	 pub(super) type Quizzes<T:Config> = StorageMap<_, Twox64Concat, T::Hash, Quiz<T>>; // list of quizzes
 
-	// Dispatchable functions allows users to interact with the pallet and invoke state changes.
-	// These functions materialize as "extrinsics", which are often compared to transactions.
-	// Dispatchable functions must be annotated with a weight and must return a DispatchResult.
-	#[pallet::call]
-	impl<T: Config> Pallet<T> {
-		/// An example dispatchable that takes a singles value as a parameter, writes the value to
-		/// storage and emits an event. This function must be dispatched by a signed extrinsic.
-		#[pallet::weight(10_000 + T::DbWeight::get().writes(1))]
-		pub fn do_something(origin: OriginFor<T>, something: u32) -> DispatchResult {
-			// Check that the extrinsic was signed and get the signer.
-			// This function will return an error if the extrinsic is not signed.
-			// https://docs.substrate.io/v3/runtime/origins
-			let who = ensure_signed(origin)?;
+	 #[pallet::storage]
+	 #[pallet::getter(fn get_solution)]
+	 pub(super) type Solutions<T:Config> = StorageMap<_, Twox64Concat, T::Hash, Solution>; // list of answers
 
-			// Update storage.
-			<Something<T>>::put(something);
+	 #[pallet::storage]
+	 #[pallet::getter(fn get_user_rating)]
+	 pub(super) type UserRating<T:Config> = StorageMap<_, Twox64Concat, T::AccountId, u8, ValueQuery>;
 
-			// Emit an event.
-			Self::deposit_event(Event::SomethingStored(something, who));
-			// Return a successful DispatchResultWithPostInfo
+	 #[pallet::call]
+    impl<T: Config> Pallet<T> {
+
+		#[pallet::weight(100)]
+		pub fn add_quiz(
+			origin: OriginFor<T>,
+			question1: Question,
+			question2: Question,
+			question3: Question,
+			question4: Question,
+			question5: Question,
+			solution: Solution,
+			rating: u8,
+		) -> DispatchResult {
+			let sender = ensure_signed(origin)?;
+			ensure!(solution.answer1 > 0 && solution.answer2 > 0 && solution.answer3 > 0 && solution.answer4 > 0, <Error<T>>::InvalidOptionProvided);
+			ensure!(solution.answer1 <= 4 && solution.answer2 <= 4 && solution.answer3 <= 4 && solution.answer4 <= 4, <Error<T>>::InvalidOptionProvided);
+			let mut _questions = Vec::new();
+			_questions.push(question1);
+			_questions.push(question2);
+			_questions.push(question3);
+			_questions.push(question4);
+			_questions.push(question5);
+			let quiz = Quiz::<T> {
+				owner: sender.clone(),
+				questions: _questions,
+				rating: rating.clone(),
+			};
+			let quiz_id = T::Hashing::hash_of(&quiz);
+			<Quizzes<T>>::insert(quiz_id.clone(), quiz);
+			<Solutions<T>>::insert(quiz_id.clone(), solution);
+			Self::deposit_event(Event::QuizCreated(quiz_id, sender, rating));
 			Ok(())
 		}
 
-		/// An example dispatchable that may throw a custom error.
-		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1))]
-		pub fn cause_error(origin: OriginFor<T>) -> DispatchResult {
-			let _who = ensure_signed(origin)?;
+		#[pallet::weight(100)]
+		pub fn attempt_quiz(
+			origin: OriginFor<T>,
+			quiz_id: T::Hash,
+			submission: Solution
+		) -> DispatchResult {
+			let sender = ensure_signed(origin)?;
+			
 
-			// Read a value from storage.
-			match <Something<T>>::get() {
-				// Return an error if the value has not been set.
-				None => Err(Error::<T>::NoneValue)?,
-				Some(old) => {
-					// Increment the value read from storage; will error in the event of overflow.
-					let new = old.checked_add(1).ok_or(Error::<T>::StorageOverflow)?;
-					// Update the value in storage with the incremented result.
-					<Something<T>>::put(new);
-					Ok(())
-				},
+			let quiz = Self::get_quiz(&quiz_id).ok_or(<Error<T>>::QuizDoesNotExist)?;
+
+			// ensuring the quiz attemptor is not the quiz creator
+			ensure!(sender != quiz.owner,<Error<T>>::OwnerCannotAttemptQuiz);
+
+			let user_rating = Self::get_user_rating(&sender);
+
+			// ensure the user is qualified to attempt the quiz
+			ensure!(user_rating >= quiz.rating - 1,<Error<T>>::UserRatingTooLow);
+
+			let solution = Self::get_solution(&quiz_id).ok_or(<Error<T>>::QuizDoesNotExist)?;
+
+			let score = Self::find_score(quiz_id.clone(), submission, solution);
+
+			let mut user_rating = Self::get_user_rating(&sender);
+			
+			Self::update_rating(sender.clone(), score.clone(), user_rating);
+
+			Self::deposit_event(Event::QuizScore(quiz_id, sender, score));
+			Ok(())
+		}
+    }
+
+	impl<T:Config> Pallet<T> {
+		//Helper functions here
+
+		pub fn find_score(
+			quiz_id: T::Hash,
+			submission: Solution,
+			solution: Solution,
+		) -> u8 {
+			// function body starts here
+
+			let mut score : u8 = 0;
+
+			// checking for correct answers
+			if submission.answer1 == solution.answer1 {
+				score+=1;
 			}
+			if submission.answer2 == solution.answer2 {
+				score+=1;
+			}
+			if submission.answer3 == solution.answer3 {
+				score+=1;
+			}
+			if submission.answer4 == solution.answer4 {
+				score+=1;
+			}
+			if submission.answer5 == solution.answer5 {
+				score+=1;
+			}
+			score
+			//function body ends here
+		}
+
+		// function to update the rating of the user
+		pub fn update_rating(
+			user: T::AccountId,
+			current_score: u8,
+			user_rating: u8,
+		) -> () {
+
+
+			let total : u8 = match user_rating {
+				0 => 1,
+				_ => 6
+			};
+			let user_rating = (user_rating * 5 + current_score)/total;
+			<UserRating<T>>::insert(user, user_rating);
+			()
 		}
 	}
 }
