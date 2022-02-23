@@ -4,12 +4,11 @@ pub use pallet::*;
 
 #[frame_support::pallet]
 pub mod pallet {
-// use frame_support::tests::Config;
 	use sp_std::vec::Vec;
 	use frame_system::pallet_prelude::*;
 	use frame_support::pallet_prelude::*;
 	use frame_support::{
-		sp_runtime::traits::Hash,
+		sp_runtime::traits::{Hash, AccountIdConversion, SaturatedConversion},
 	};
 
 	#[cfg(feature = "std")]
@@ -74,6 +73,8 @@ pub mod pallet {
 		 OwnerCannotAttemptQuiz,
 		 /// Handles if the non quiz owner tries to change the quiz settings
 		 NotTheQuizOwner,
+		 /// If the quiz cannot be deleted
+		 CannotDeleteQuiz,
 	 }
  
 	 #[pallet::event]
@@ -83,6 +84,8 @@ pub mod pallet {
 		 QuizCreated(u64, T::AccountId, u8),
 		 /// Quiz score after attempt
 		 QuizScore(u64, T::AccountId, u8),
+		 /// Quiz deleted from the chain
+		 QuizDeleted(u64),
 	 }
 	 
 	 #[pallet::storage]
@@ -100,6 +103,41 @@ pub mod pallet {
 	 #[pallet::storage]
 	 #[pallet::getter(fn get_latest_quiz)]
 	 pub(super) type QuizCnt<T:Config> = StorageValue<_, u64, ValueQuery>;
+
+	 #[pallet::storage]
+	 #[pallet::getter(fn get_quiz_to_delete)]
+	 pub(super) type QuizToDelete<T:Config> = StorageMap<_, Twox64Concat, T::Hash, Vec<T::Hash>, ValueQuery>;
+
+	 #[pallet::genesis_config]
+	 pub struct GenesisConfig<T:Config> {
+		 pub delete_vec : Vec<T::Hash>,
+	 }
+
+	 #[cfg(feature = "std")]
+	 impl<T:Config> Default for GenesisConfig<T> {
+		 fn default() -> GenesisConfig<T> {
+			 GenesisConfig {
+				 delete_vec : vec![]
+			 }
+		 }
+	 }
+
+	 #[pallet::genesis_build]
+	 impl<T:Config> GenesisBuild<T> for GenesisConfig<T> {
+		 fn build(&self) {
+			 let bnumber = <frame_system::Pallet<T>>::block_number();
+			 <Pallet<T>>::add_quiz_to_be_deleted(bnumber, 0);
+		 }
+	 }
+
+	 #[pallet::hooks]
+	 impl<T:Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+		 fn on_initialize(now: T::BlockNumber) -> Weight {
+			 let total_weight : Weight = 10;
+			 Self::check_and_delete_quiz(now);
+			 total_weight
+		 }
+	 }
 
 	 #[pallet::call]
     impl<T: Config> Pallet<T> {
@@ -134,6 +172,9 @@ pub mod pallet {
 			<Quizzes<T>>::insert(quiz_id.clone(), quiz);
 			<Solutions<T>>::insert(quiz_id, solution);
 			<QuizCnt<T>>::put(quiz_count);
+
+			let the_end_block_number = <frame_system::Pallet<T>>::block_number();
+			Self::add_quiz_to_be_deleted(the_end_block_number, quiz_count);
 			Self::deposit_event(Event::QuizCreated(quiz_count, sender, rating));
 			Ok(())
 		}
@@ -224,8 +265,7 @@ pub mod pallet {
 			current_score: u8,
 			user_rating: u8,
 		) -> () {
-
-
+			// function body starts here
 			let total : u8 = match user_rating {
 				0 => 1,
 				_ => 6
@@ -233,6 +273,48 @@ pub mod pallet {
 			let user_rating = (user_rating * 5 + current_score)/total;
 			<UserRating<T>>::insert(user, user_rating);
 			()
+			// function body ends here
+		}
+
+		pub fn check_and_delete_quiz(
+			block_number : T::BlockNumber
+		) -> () {
+			// function body starts here
+			let block : u64 = block_number.saturated_into::<u64>();
+			let block_hash = T::Hashing::hash_of(&block);
+			let delete_vec = Self::get_quiz_to_delete(block_hash);
+			// match option_delete_vec {
+			// 	// Some(delete_vec) => {
+			// 	// 	for hash in delete_vec {
+			// 	// 		<Quizzes<T>>::remove(hash);
+			// 	// 		Self::deposit_event(Event::QuizDeleted(block.clone()));
+			// 	// 	}
+			// 	// },
+			// 	// None => ()
+			// }
+			for hash in delete_vec {
+				<Quizzes<T>>::remove(hash);
+				Self::deposit_event(Event::QuizDeleted(block.clone()));
+			}
+			()
+			//function body ends here
+		}
+
+		pub fn add_quiz_to_be_deleted(
+			the_end_block_number : T::BlockNumber,
+			quiz_number : u64,
+		) -> () {
+			// hook logic down 
+			let mut  the_end_block_number = the_end_block_number.saturated_into::<u64>();
+			// the_end_block_number = (24 * 60 * 10) + the_end_block_number;  // this is for production
+			the_end_block_number = 10 + the_end_block_number; // this is for the test
+			let delete_id = T::Hashing::hash_of(&the_end_block_number);
+			// <QuizToDelete<T>>::insert(delete_id, quiz_id);
+			let quiz_id = T::Hashing::hash_of(&quiz_number);
+			<QuizToDelete<T>>::mutate(delete_id, |quiz_vec| {
+				// quiz_vec.push(quiz_id)
+				quiz_vec.push(quiz_id)
+			});
 		}
 	}
 }
