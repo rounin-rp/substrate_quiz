@@ -72,17 +72,19 @@ pub mod pallet {
 		 UserRatingTooLow,
 		 /// Handles if the quiz owner tries to attempt the quiz
 		 OwnerCannotAttemptQuiz,
+		 /// Handles if the non quiz owner tries to change the quiz settings
+		 NotTheQuizOwner,
 	 }
  
 	 #[pallet::event]
 	 #[pallet::generate_deposit(pub(super) fn deposit_event)]
 	 pub enum Event<T: Config> {
 		 ///Quiz created
-		 QuizCreated(T::Hash, T::AccountId, u8),
+		 QuizCreated(u64, T::AccountId, u8),
 		 /// Quiz score after attempt
-		 QuizScore(T::Hash, T::AccountId, u8),
+		 QuizScore(u64, T::AccountId, u8),
 	 }
-
+	 
 	 #[pallet::storage]
 	 #[pallet::getter(fn get_quiz)]
 	 pub(super) type Quizzes<T:Config> = StorageMap<_, Twox64Concat, T::Hash, Quiz<T>>; // list of quizzes
@@ -94,6 +96,10 @@ pub mod pallet {
 	 #[pallet::storage]
 	 #[pallet::getter(fn get_user_rating)]
 	 pub(super) type UserRating<T:Config> = StorageMap<_, Twox64Concat, T::AccountId, u8, ValueQuery>;
+
+	 #[pallet::storage]
+	 #[pallet::getter(fn get_latest_quiz)]
+	 pub(super) type QuizCnt<T:Config> = StorageValue<_, u64, ValueQuery>;
 
 	 #[pallet::call]
     impl<T: Config> Pallet<T> {
@@ -123,22 +129,24 @@ pub mod pallet {
 				questions: _questions,
 				rating: rating.clone(),
 			};
-			let quiz_id = T::Hashing::hash_of(&quiz);
+			let quiz_count = Self::get_latest_quiz() + 1;
+			let quiz_id = T::Hashing::hash_of(&quiz_count);
 			<Quizzes<T>>::insert(quiz_id.clone(), quiz);
-			<Solutions<T>>::insert(quiz_id.clone(), solution);
-			Self::deposit_event(Event::QuizCreated(quiz_id, sender, rating));
+			<Solutions<T>>::insert(quiz_id, solution);
+			<QuizCnt<T>>::put(quiz_count);
+			Self::deposit_event(Event::QuizCreated(quiz_count, sender, rating));
 			Ok(())
 		}
 
 		#[pallet::weight(100)]
 		pub fn attempt_quiz(
 			origin: OriginFor<T>,
-			quiz_id: T::Hash,
+			quiz_count: u64,
 			submission: Solution
 		) -> DispatchResult {
 			let sender = ensure_signed(origin)?;
 			
-
+			let quiz_id = T::Hashing::hash_of(&quiz_count);
 			let quiz = Self::get_quiz(&quiz_id).ok_or(<Error<T>>::QuizDoesNotExist)?;
 
 			// ensuring the quiz attemptor is not the quiz creator
@@ -151,14 +159,31 @@ pub mod pallet {
 
 			let solution = Self::get_solution(&quiz_id).ok_or(<Error<T>>::QuizDoesNotExist)?;
 
-			let score = Self::find_score(quiz_id.clone(), submission, solution);
+			let score = Self::find_score(submission, solution);
 
-			let mut user_rating = Self::get_user_rating(&sender);
+			let user_rating = Self::get_user_rating(&sender);
 			
 			Self::update_rating(sender.clone(), score.clone(), user_rating);
 
-			Self::deposit_event(Event::QuizScore(quiz_id, sender, score));
+			Self::deposit_event(Event::QuizScore(quiz_count, sender, score));
 			Ok(())
+		}
+
+		#[pallet::weight(100)]
+		pub fn delete_quiz(
+			origin: OriginFor<T>,
+			quiz_count: u64
+		) -> DispatchResult {
+			// function body starts here
+			let sender = ensure_signed(origin)?;
+			let quiz_id = T::Hashing::hash_of(&quiz_count);
+			let quiz = Self::get_quiz(&quiz_id).ok_or(<Error<T>>::QuizDoesNotExist)?;
+
+			// ensuring that only the quiz owner can set the quiz for deletion
+			ensure!(sender == quiz.owner, <Error<T>>::NotTheQuizOwner);
+			<Quizzes<T>>::remove(quiz_id);
+			Ok(())
+			// function body ends here
 		}
     }
 
@@ -166,7 +191,6 @@ pub mod pallet {
 		//Helper functions here
 
 		pub fn find_score(
-			quiz_id: T::Hash,
 			submission: Solution,
 			solution: Solution,
 		) -> u8 {
