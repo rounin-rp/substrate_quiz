@@ -80,11 +80,11 @@ pub mod pallet {
 	 #[pallet::event]
 	 #[pallet::generate_deposit(pub(super) fn deposit_event)]
 	 pub enum Event<T: Config> {
-		 ///Quiz created
+		 ///[QuizID, AccountId, Rating]
 		 QuizCreated(u64, T::AccountId, u8),
-		 /// Quiz score after attempt
+		 /// [QuizID, AccountId, Score]
 		 QuizScore(u64, T::AccountId, u8),
-		 /// Quiz deleted from the chain
+		 /// [QuizID]
 		 QuizDeleted(u64),
 	 }
 	 
@@ -307,7 +307,7 @@ pub mod pallet {
 			// hook logic down 
 			let mut  the_end_block_number = the_end_block_number.saturated_into::<u64>();
 			// the_end_block_number = (24 * 60 * 10) + the_end_block_number;  // this is for production
-			the_end_block_number = 10 + the_end_block_number; // this is for the test
+			the_end_block_number = 14400 + the_end_block_number; // this is for the test
 			let delete_id = T::Hashing::hash_of(&the_end_block_number);
 			// <QuizToDelete<T>>::insert(delete_id, quiz_id);
 			let quiz_id = T::Hashing::hash_of(&quiz_number);
