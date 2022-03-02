@@ -59,6 +59,10 @@ pub mod pallet {
         /// Because this pallet emits events, it depends on the runtime's definition of an event.
         type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
 		type Currency: Currency<Self::AccountId>;
+
+		// the amount of tokens to deduct per wrong answer
+		#[pallet::constant]
+		type TokensPerQuestion: Get<u32>;
     }
 
 	 // Errors.
@@ -188,7 +192,7 @@ pub mod pallet {
 			let user_rating = Self::get_user_rating(&sender);
 
 			//the money feature 
-			let token_to_pay = (5 - score as u32) * 10000000;
+			let token_to_pay = (5 - score as u32) * T::TokensPerQuestion::get();
 			let token_to_pay : BalanceOf<T> = token_to_pay.into();
 			Self::transfer_tokens_to_owner(&sender, &quiz.owner, token_to_pay)?;			
 			Self::update_rating(sender.clone(), score.clone(), user_rating);
