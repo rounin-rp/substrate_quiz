@@ -9,12 +9,14 @@ pub mod pallet {
 	use frame_support::pallet_prelude::*;
 	use frame_support::{
 		sp_runtime::traits::{Hash, AccountIdConversion, SaturatedConversion},
+		traits::{Currency, ExistenceRequirement},
 	};
 
 	#[cfg(feature = "std")]
 	use frame_support::serde::{Deserialize, Serialize};
 
 	type AccountOf<T> = <T as frame_system::Config>::AccountId;
+	type BalanceOf<T> = <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
 
 	//Struct for Quiz
@@ -56,6 +58,7 @@ pub mod pallet {
     pub trait Config: frame_system::Config {
         /// Because this pallet emits events, it depends on the runtime's definition of an event.
         type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
+		type Currency: Currency<Self::AccountId>;
     }
 
 	 // Errors.
@@ -75,16 +78,18 @@ pub mod pallet {
 		 NotTheQuizOwner,
 		 /// If the quiz cannot be deleted
 		 CannotDeleteQuiz,
+		 /// If the player has not enough balance 
+		 InsufficientBalance,
 	 }
  
 	 #[pallet::event]
 	 #[pallet::generate_deposit(pub(super) fn deposit_event)]
 	 pub enum Event<T: Config> {
-		 ///[QuizID, AccountId, Rating]
+		 /// A new quiz was created. \[QuizId, Account, Rating\]
 		 QuizCreated(u64, T::AccountId, u8),
-		 /// [QuizID, AccountId, Score]
+		 /// Score was generated after attempting the quiz. \[QuizID, AccountId, Score\]
 		 QuizScore(u64, T::AccountId, u8),
-		 /// [QuizID]
+		 /// Quiz was deleted in block number. \[BlockNumber\]
 		 QuizDeleted(u64),
 	 }
 	 
@@ -107,28 +112,6 @@ pub mod pallet {
 	 #[pallet::storage]
 	 #[pallet::getter(fn get_quiz_to_delete)]
 	 pub(super) type QuizToDelete<T:Config> = StorageMap<_, Twox64Concat, T::Hash, Vec<T::Hash>, ValueQuery>;
-
-	 #[pallet::genesis_config]
-	 pub struct GenesisConfig<T:Config> {
-		 pub delete_vec : Vec<T::Hash>,
-	 }
-
-	 #[cfg(feature = "std")]
-	 impl<T:Config> Default for GenesisConfig<T> {
-		 fn default() -> GenesisConfig<T> {
-			 GenesisConfig {
-				 delete_vec : vec![]
-			 }
-		 }
-	 }
-
-	 #[pallet::genesis_build]
-	 impl<T:Config> GenesisBuild<T> for GenesisConfig<T> {
-		 fn build(&self) {
-			 let bnumber = <frame_system::Pallet<T>>::block_number();
-			 <Pallet<T>>::add_quiz_to_be_deleted(bnumber, 0);
-		 }
-	 }
 
 	 #[pallet::hooks]
 	 impl<T:Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
@@ -174,7 +157,7 @@ pub mod pallet {
 			<QuizCnt<T>>::put(quiz_count);
 
 			let the_end_block_number = <frame_system::Pallet<T>>::block_number();
-			Self::add_quiz_to_be_deleted(the_end_block_number, quiz_count);
+			Self::add_quiz_to_be_deleted(the_end_block_number, quiz_count)?;
 			Self::deposit_event(Event::QuizCreated(quiz_count, sender, rating));
 			Ok(())
 		}
@@ -203,7 +186,11 @@ pub mod pallet {
 			let score = Self::find_score(submission, solution);
 
 			let user_rating = Self::get_user_rating(&sender);
-			
+
+			//the money feature 
+			let token_to_pay = (5 - score as u32) * 10000000;
+			let token_to_pay : BalanceOf<T> = token_to_pay.into();
+			Self::transfer_tokens_to_owner(&sender, &quiz.owner, token_to_pay)?;			
 			Self::update_rating(sender.clone(), score.clone(), user_rating);
 
 			Self::deposit_event(Event::QuizScore(quiz_count, sender, score));
@@ -264,7 +251,7 @@ pub mod pallet {
 			user: T::AccountId,
 			current_score: u8,
 			user_rating: u8,
-		) -> () {
+		){
 			// function body starts here
 			let total : u8 = match user_rating {
 				0 => 1,
@@ -272,49 +259,54 @@ pub mod pallet {
 			};
 			let user_rating = (user_rating * 5 + current_score)/total;
 			<UserRating<T>>::insert(user, user_rating);
-			()
 			// function body ends here
 		}
 
 		pub fn check_and_delete_quiz(
 			block_number : T::BlockNumber
-		) -> () {
+		){
 			// function body starts here
 			let block : u64 = block_number.saturated_into::<u64>();
 			let block_hash = T::Hashing::hash_of(&block);
 			let delete_vec = Self::get_quiz_to_delete(block_hash);
-			// match option_delete_vec {
-			// 	// Some(delete_vec) => {
-			// 	// 	for hash in delete_vec {
-			// 	// 		<Quizzes<T>>::remove(hash);
-			// 	// 		Self::deposit_event(Event::QuizDeleted(block.clone()));
-			// 	// 	}
-			// 	// },
-			// 	// None => ()
-			// }
 			for hash in delete_vec {
 				<Quizzes<T>>::remove(hash);
+				
 				Self::deposit_event(Event::QuizDeleted(block.clone()));
 			}
-			()
 			//function body ends here
 		}
 
 		pub fn add_quiz_to_be_deleted(
 			the_end_block_number : T::BlockNumber,
 			quiz_number : u64,
-		) -> () {
+		) -> Result<(), Error<T>> {
 			// hook logic down 
 			let mut  the_end_block_number = the_end_block_number.saturated_into::<u64>();
-			// the_end_block_number = (24 * 60 * 10) + the_end_block_number;  // this is for production
-			the_end_block_number = 14400 + the_end_block_number; // this is for the test
+			// the_end_block_number = 14400 + the_end_block_number;  // this is for production
+			the_end_block_number = 10 + the_end_block_number; // this is for the test
 			let delete_id = T::Hashing::hash_of(&the_end_block_number);
-			// <QuizToDelete<T>>::insert(delete_id, quiz_id);
 			let quiz_id = T::Hashing::hash_of(&quiz_number);
-			<QuizToDelete<T>>::mutate(delete_id, |quiz_vec| {
-				// quiz_vec.push(quiz_id)
-				quiz_vec.push(quiz_id)
-			});
+			<QuizToDelete<T>>::try_mutate(&delete_id, |quiz_vec| { 
+				quiz_vec.push(quiz_id);
+				Ok(())
+			})?;
+			Ok(())
+		}
+
+		pub fn transfer_tokens_to_owner(
+			sender: &T::AccountId,
+			receiver: &T::AccountId,
+			amount: BalanceOf<T>,
+		) -> Result<(),Error<T>> {
+			// ensure!(T::Currency::free_balance(&sender) >= amount, <Error<T>>::InsufficientBalance)?;
+			let free_balance = T::Currency::free_balance(&sender);
+			if free_balance < amount {
+				Err(<Error<T>>::InsufficientBalance)
+			}else{
+				T::Currency::transfer(&sender, &receiver, amount, ExistenceRequirement::KeepAlive).map_err(|_|<Error<T>>::InsufficientBalance)?;
+				Ok(())
+			}
 		}
 	}
 }
